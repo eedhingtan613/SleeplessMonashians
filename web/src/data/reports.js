@@ -103,3 +103,14 @@ export async function processInbox(seed = null, n = 500) {
     body: JSON.stringify(body),
   });
 }
+
+export async function getValidationRuns(limit = 5) {
+  const data = await request(`/validation-runs?limit=${encodeURIComponent(limit)}`);
+  return data.runs || [];
+}
+
+export async function resetToDefault() {
+  return request("/reset", {
+    method: "POST",
+  });
+}

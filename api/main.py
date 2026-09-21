@@ -19,13 +19,14 @@ import sys
 import tempfile
 import os
 import json
+import mimetypes
 
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -48,6 +49,14 @@ from api.storage import (  # noqa: I001
     save_review,
     update_result_after_review,
     clear_results,
+    save_source_email,
+    save_source_document,
+    get_source_email as get_stored_source_email,
+    get_source_document as get_stored_source_document,
+    clear_source_snapshots,
+    save_validation_run,
+    get_validation_runs,
+    clear_validation_runs,
 )
 
 
@@ -123,6 +132,52 @@ def generate_source(seed: int, n: int = 500) -> tuple[FolderSource, Path]:
         ) from exc
 
     return FolderSource(temp_dir), temp_dir
+
+
+def _snapshot_source(source: FolderSource) -> None:
+    """Persist the currently processed email records and attachment bytes.
+
+    Generated datasets live in a temporary directory which is deleted at the
+    end of /process. Saving the source data here lets the report/review UI open
+    the Email, Raw SI and Raw BL tabs afterwards.
+    """
+    clear_source_snapshots()
+
+    for email in source.emails():
+        save_source_email(email)
+        attachments = email.get("attachments") or []
+
+        for which_doc, idx in (("si", 0), ("bl", 1)):
+            if idx >= len(attachments):
+                continue
+
+            path = attachments[idx]
+            content = source.attachment(path)
+            if content is not None:
+                save_source_document(
+                    email_id=email["email_id"],
+                    which_doc=which_doc,
+                    path=path,
+                    content=content,
+                )
+
+
+class _StoredEmailSource:
+    """Minimal EmailSource backed by the source snapshots in SQLite."""
+
+    def __init__(self, email: dict):
+        self.email = email
+        self._by_path = {}
+        for which_doc in ("si", "bl"):
+            doc = get_stored_source_document(email["email_id"], which_doc)
+            if doc is not None:
+                self._by_path[doc["path"]] = doc["content"]
+
+    def emails(self):
+        yield self.email
+
+    def attachment(self, path: str):
+        return self._by_path.get(path)
 
 
 # ---------------------------------------------------------------------------
@@ -251,7 +306,7 @@ def process_inbox(request: ProcessRequest = ProcessRequest()):
     - the supplied dataset when no seed is provided
     - a newly generated dataset when a seed is provided
 
-    Results are persisted for the frontend.
+    Results AND source documents are persisted for the frontend.
     """
 
     temp_dir = None
@@ -260,7 +315,6 @@ def process_inbox(request: ProcessRequest = ProcessRequest()):
         # ---------------------------------------------------------
         # Select dataset
         # ---------------------------------------------------------
-
         if request.seed is None:
             source = get_source()
             dataset_name = "supplied"
@@ -275,14 +329,22 @@ def process_inbox(request: ProcessRequest = ProcessRequest()):
                 seed=request.seed,
                 n=request.n,
             )
-
             dataset_name = f"seed-{request.seed}"
 
         # ---------------------------------------------------------
         # Run pipeline
         # ---------------------------------------------------------
-
         llm = _get_llm()
+
+        # For generated validation datasets, also run the exact same data
+        # with rules only. This gives a fair apples-to-apples Rules score.
+        # The Gemini-enabled result remains the one persisted to the inbox.
+        rules_results = None
+        if request.seed is not None:
+            rules_results = run(
+                source,
+                llm_classify=None,
+            )
 
         if llm is not None:
             _warm_llm_cache(source)
@@ -291,11 +353,12 @@ def process_inbox(request: ProcessRequest = ProcessRequest()):
             source,
             llm_classify=llm,
         )
-        # ---------------------------------------------------------
-        # Score current run
-        # ---------------------------------------------------------
 
+        # ---------------------------------------------------------
+        # Score current generated run
+        # ---------------------------------------------------------
         evaluation = None
+        rules_score = None
 
         if request.seed is not None and temp_dir is not None:
             ground_truth_path = temp_dir / "ground_truth.json"
@@ -310,10 +373,7 @@ def process_inbox(request: ProcessRequest = ProcessRequest()):
                     for email_id, result in results.items()
                 }
 
-                scores = score_all(
-                    ground_truth,
-                    submission,
-                )
+                scores = score_all(ground_truth, submission)
 
                 evaluation = {
                     "final_score": scores["final_score"],
@@ -325,30 +385,38 @@ def process_inbox(request: ProcessRequest = ProcessRequest()):
                     "end_to_end_success": scores["end_to_end"]["success"],
                     "end_to_end_total": scores["end_to_end"]["total"],
                 }
-            
-            clear_results()
-            save_results(results)
-            _set_loaded_dataset(dataset_name)
 
-            review_count = sum(
-                1
-                for result in results.values()
-                if result.needs_review
-            )
+                if rules_results is not None:
+                    rules_submission = {
+                        email_id: result.to_submission()
+                        for email_id, result in rules_results.items()
+                    }
+                    rules_scores = score_all(
+                        ground_truth,
+                        rules_submission,
+                    )
+                    rules_score = rules_scores["final_score"]
 
-            mismatch_count = sum(
-                1
-                for result in results.values()
-                if result.has_defect
-            )
+        # ---------------------------------------------------------
+        # Persist results + the source records/documents BEFORE the
+        # generated temp directory is removed in finally.
+        # ---------------------------------------------------------
+        clear_results()
+        save_results(results)
+        _snapshot_source(source)
+        _set_loaded_dataset(dataset_name)
 
-            ok_count = sum(
-                1
-                for result in results.values()
-                if result.status == "OK"
-            )
+        review_count = sum(
+            1 for result in results.values() if result.needs_review
+        )
+        mismatch_count = sum(
+            1 for result in results.values() if result.has_defect
+        )
+        ok_count = sum(
+            1 for result in results.values() if result.status == "OK"
+        )
 
-            return {
+        response_payload = {
             "message": "Inbox processed successfully",
             "dataset": dataset_name,
             "seed": request.seed,
@@ -358,8 +426,15 @@ def process_inbox(request: ProcessRequest = ProcessRequest()):
             "needs_review": review_count,
             "mismatches": mismatch_count,
             "llm_enabled": llm is not None,
+            "rules_score": rules_score,
             "evaluation": evaluation,
         }
+
+        # Generated runs are shared across browsers through the backend.
+        if evaluation is not None:
+            save_validation_run(response_payload)
+
+        return response_payload
 
     except HTTPException:
         raise
@@ -371,13 +446,37 @@ def process_inbox(request: ProcessRequest = ProcessRequest()):
         ) from exc
 
     finally:
-        # The processed results are already in SQLite, so the generated
-        # files no longer need to stay on disk.
         if temp_dir is not None:
-            shutil.rmtree(
-                temp_dir,
-                ignore_errors=True,
-            )
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Shared validation history / reset
+# ---------------------------------------------------------------------------
+
+@app.get("/validation-runs")
+def validation_runs(limit: int = 5):
+    """Return recent generated-run scores shared by every frontend client."""
+    return {
+        "count": len(get_validation_runs(limit)),
+        "runs": get_validation_runs(limit),
+    }
+
+
+@app.post("/reset")
+def reset_to_default():
+    """
+    Restore the dashboard to the supplied hackathon dataset and clear the
+    shared generated-run history. This reset is global for every client.
+    """
+    result = process_inbox(ProcessRequest(seed=None, n=500))
+    clear_validation_runs()
+    return {
+        **result,
+        "message": "Dashboard reset to supplied dataset",
+        "reset": True,
+    }
+
 
 # ---------------------------------------------------------------------------
 # Process one existing dataset email
@@ -391,23 +490,15 @@ def process_one_email(email_id: str):
     """
 
     try:
-        source = get_source()
-
-        email = next(
-            (
-                item
-                for item in source.emails()
-                if item.get("email_id") == email_id
-            ),
-            None,
-        )
+        email = get_stored_source_email(email_id)
 
         if email is None:
             raise HTTPException(
                 status_code=404,
-                detail=f"Email {email_id} not found",
+                detail=f"Email {email_id} source is not available",
             )
 
+        source = _StoredEmailSource(email)
         result = process_email(email, source, llm_classify=_get_llm())
 
         payload = result.to_dict()
@@ -550,9 +641,7 @@ def amendment_draft(email_id: str, refresh: bool = False):
         ]
         si = bl = None
 
-    source_email = next(
-        (e for e in get_source().emails() if e["email_id"] == email_id), None
-    )
+    source_email = get_stored_source_email(email_id)
 
     # Pass the refresh flag down to draft_amendment
     draft = draft_amendment(_R, source_email, refresh=refresh)
@@ -594,32 +683,28 @@ def _loaded_dataset() -> str:
 
 
 def _source_email(email_id: str) -> dict:
-    if _loaded_dataset() != "supplied":
-        raise HTTPException(
-            status_code=409,
-            detail=(f"The loaded results come from a generated dataset "
-                    f"({_loaded_dataset()}), whose files are not kept. "
-                    f"Run POST /process without a seed to view documents."),
-        )
-    email = next((e for e in get_source().emails()
-                  if e["email_id"] == email_id), None)
+    email = get_stored_source_email(email_id)
     if email is None:
-        raise HTTPException(status_code=404, detail=f"{email_id} not found")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Source email for {email_id} is not available. Run POST /process first.",
+        )
     return email
 
 
-def _attachment_path(email: dict, which: str) -> str:
-    atts = email.get("attachments") or []
-    idx = {"si": 0, "bl": 1}[which]
-    if idx >= len(atts):
-        raise HTTPException(status_code=404,
-                            detail=f"This email has no {which.upper()} attachment.")
-    return atts[idx]
+def _source_document(email_id: str, which: str) -> dict:
+    doc = get_stored_source_document(email_id, which)
+    if doc is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"This email has no stored {which.upper()} attachment.",
+        )
+    return doc
 
 
 @app.get("/emails/{email_id}/source")
 def email_source(email_id: str):
-    """The original email: sender, subject, body and attachment names."""
+    """The original email saved from the currently processed dataset."""
     email = _source_email(email_id)
     return {
         "email_id": email_id,
@@ -634,29 +719,23 @@ def email_source(email_id: str):
 
 @app.get("/emails/{email_id}/document/{which}")
 def email_document(email_id: str, which: Literal["si", "bl"]):
-    """
-    The attachment as the pipeline read it, line by line, with the lines each
-    field was extracted from marked. Line numbers are the same ones stored in
-    every field's provenance, so the highlights point at exactly the text the
-    comparison used.
-    """
-    email = _source_email(email_id)
-    path = _attachment_path(email, which)
-    read = ingest(path, get_source().attachment(path))
+    """Return an SI/BL exactly as the pipeline can ingest it, with highlights."""
+    doc = _source_document(email_id, which)
+    path = doc["path"]
+    read = ingest(path, doc["content"])
 
-    # identical split to extract.py, so line N here is line N in provenance
-    lines = [l.rstrip() for l in (read.text or "").split("\n")]
+    lines = [line.rstrip() for line in (read.text or "").split("\n")]
 
     highlights = []
     stored = get_result(email_id)
-    for c in (stored or {}).get("comparisons", []):
-        src = ((c.get(which) or {}).get("source") or {})
+    for comparison in (stored or {}).get("comparisons", []):
+        src = ((comparison.get(which) or {}).get("source") or {})
         line = src.get("line", -1)
         if isinstance(line, int) and 1 <= line <= len(lines):
             highlights.append({
                 "line": line,
-                "field": c["field"],
-                "status": c["status"],            # match | mismatch | uncertain
+                "field": comparison["field"],
+                "status": comparison["status"],
                 "label": src.get("label_seen", ""),
             })
 
@@ -674,13 +753,22 @@ def email_document(email_id: str, which: Literal["si", "bl"]):
 
 @app.get("/emails/{email_id}/file/{which}")
 def email_file(email_id: str, which: Literal["si", "bl"]):
-    """The original attachment file, for "Open original"."""
-    email = _source_email(email_id)
-    rel = _attachment_path(email, which)
-    full = (BUNDLE_PATH / rel).resolve()
-    if BUNDLE_PATH.resolve() not in full.parents or not full.is_file():
+    """Return the stored original attachment for Open original."""
+    doc = _source_document(email_id, which)
+    content = doc.get("content")
+    if content is None:
         raise HTTPException(status_code=404, detail="Attachment file not found.")
-    return FileResponse(full, filename=full.name)
+
+    filename = Path(doc["path"]).name
+    media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"'
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

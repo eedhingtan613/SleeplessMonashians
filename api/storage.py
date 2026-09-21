@@ -53,6 +53,60 @@ def init_db() -> None:
             """
         )
 
+        # Source snapshots let the UI reopen generated emails/documents after
+        # the generator's temporary folder has been deleted.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS source_emails (
+                email_id TEXT PRIMARY KEY,
+                source_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS source_documents (
+                email_id TEXT NOT NULL,
+                which_doc TEXT NOT NULL,
+                path TEXT NOT NULL,
+                content BLOB,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (email_id, which_doc)
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS validation_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dataset TEXT NOT NULL,
+                seed INTEGER,
+                requested_n INTEGER,
+                processed INTEGER NOT NULL,
+                ok INTEGER NOT NULL,
+                mismatches INTEGER NOT NULL,
+                needs_review INTEGER NOT NULL,
+                llm_enabled INTEGER NOT NULL,
+                rules_score REAL,
+                evaluation_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+
+        # Migration for databases created before rules_score was recorded.
+        validation_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(validation_runs)").fetchall()
+        }
+        if "rules_score" not in validation_columns:
+            conn.execute(
+                "ALTER TABLE validation_runs ADD COLUMN rules_score REAL"
+            )
+
         conn.commit()
 
 
@@ -295,7 +349,167 @@ def update_result_after_review(
 
     return result
 
+
+def save_source_email(email: dict[str, Any]) -> None:
+    """Persist the original email record for the currently loaded dataset."""
+    email_id = email.get("email_id")
+    if not email_id:
+        return
+
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO source_emails (email_id, source_json, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(email_id)
+            DO UPDATE SET
+                source_json = excluded.source_json,
+                updated_at = excluded.updated_at
+            """,
+            (email_id, json.dumps(email), now),
+        )
+        conn.commit()
+
+
+def save_source_document(
+    email_id: str,
+    which_doc: str,
+    path: str,
+    content: Optional[bytes],
+) -> None:
+    """Persist one source attachment exactly as supplied to the pipeline."""
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO source_documents (
+                email_id, which_doc, path, content, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(email_id, which_doc)
+            DO UPDATE SET
+                path = excluded.path,
+                content = excluded.content,
+                updated_at = excluded.updated_at
+            """,
+            (email_id, which_doc, path, content, now),
+        )
+        conn.commit()
+
+
+def get_source_email(email_id: str) -> Optional[dict[str, Any]]:
+    """Return the stored source email for the current dataset."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT source_json FROM source_emails WHERE email_id = ?",
+            (email_id,),
+        ).fetchone()
+
+    return json.loads(row["source_json"]) if row else None
+
+
+def get_source_document(email_id: str, which_doc: str) -> Optional[dict[str, Any]]:
+    """Return stored attachment metadata and bytes for SI or BL."""
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT path, content
+            FROM source_documents
+            WHERE email_id = ? AND which_doc = ?
+            """,
+            (email_id, which_doc),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    return {"path": row["path"], "content": row["content"]}
+
+
+def clear_source_snapshots() -> None:
+    """Remove source snapshots from the previous dataset run."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM source_documents")
+        conn.execute("DELETE FROM source_emails")
+        conn.commit()
+
 def clear_results() -> None:
     with _connect() as conn:
         conn.execute("DELETE FROM results")
         conn.commit()
+
+def save_validation_run(run: dict[str, Any]) -> int:
+    """Persist one generated-dataset validation result for all clients."""
+    evaluation = run.get("evaluation")
+    if not evaluation:
+        raise ValueError("validation run requires an evaluation")
+
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO validation_runs (
+                dataset, seed, requested_n, processed, ok, mismatches,
+                needs_review, llm_enabled, rules_score, evaluation_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run.get("dataset") or "unknown",
+                run.get("seed"),
+                run.get("requested_n"),
+                int(run.get("processed") or 0),
+                int(run.get("ok") or 0),
+                int(run.get("mismatches") or 0),
+                int(run.get("needs_review") or 0),
+                1 if run.get("llm_enabled") else 0,
+                run.get("rules_score"),
+                json.dumps(evaluation),
+                now,
+            ),
+        )
+        conn.commit()
+        return int(cursor.lastrowid)
+
+
+def get_validation_runs(limit: int = 5) -> list[dict[str, Any]]:
+    """Return newest shared validation runs first."""
+    limit = max(1, min(int(limit), 50))
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, dataset, seed, requested_n, processed, ok, mismatches,
+                   needs_review, llm_enabled, rules_score, evaluation_json, created_at
+            FROM validation_runs
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+    return [
+        {
+            "runId": str(row["id"]),
+            "dataset": row["dataset"],
+            "seed": row["seed"],
+            "requested_n": row["requested_n"],
+            "processed": row["processed"],
+            "ok": row["ok"],
+            "mismatches": row["mismatches"],
+            "needs_review": row["needs_review"],
+            "llm_enabled": bool(row["llm_enabled"]),
+            "rules_score": row["rules_score"],
+            "evaluation": json.loads(row["evaluation_json"]),
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
+
+
+def clear_validation_runs() -> None:
+    """Clear the shared validation-history table."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM validation_runs")
+        conn.commit()
+
