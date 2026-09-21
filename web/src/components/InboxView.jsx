@@ -13,13 +13,19 @@ const statusColor = {
   NEEDS_REVIEW: "text-rose-700 bg-rose-50 border-rose-200",
 };
 
+// Keyed by the review_reason codes the API sends (lowercase). The keys were
+// previously UPPERCASE, so the lookup never matched and no explanation showed.
 const reasonDetails = {
-  UNREADABLE:
+  unreadable:
     "Document could not be parsed, likely a scan quality or corrupted file issue",
-  MISSING_FIELD:
+  missing_value:
     "One or more required fields were not found in the extracted data",
-  LOW_CONFIDENCE:
+  low_confidence:
     "Extraction confidence fell below the review threshold",
+  missing_attachment:
+    "A comparison was requested but the documents were not attached",
+  wrong_doc_type:
+    "An attachment is not a Shipping Instruction or Bill of Lading",
 };
 
 export default function InboxView({ onSelect }) {
@@ -161,7 +167,7 @@ export default function InboxView({ onSelect }) {
 
   async function handleResetToDefault() {
     const confirmed = window.confirm(
-      "Reset the shared dashboard to the supplied dataset and clear generated validation history for everyone?"
+      t("Reset the shared dashboard to the supplied dataset and clear generated validation history for everyone?")
     );
 
     if (!confirmed) return;
@@ -550,7 +556,7 @@ export default function InboxView({ onSelect }) {
                     : t("Dataset processed")}
                   {processResult.seed !== null &&
                     processResult.seed !== undefined &&
-                    ` · Seed ${processResult.seed}`}
+                    ` · ${t("Seed")} ${processResult.seed}`}
                 </p>
               </div>
 
@@ -712,10 +718,10 @@ export default function InboxView({ onSelect }) {
                           : "font-medium text-neutral-800"
                       }`}
                     >
-                      {index === 0 ? "Current Run" : "Previous Run"}
+                      {index === 0 ? t("Current Run") : t("Previous Run")}
                       {run.seed !== null &&
                         run.seed !== undefined &&
-                        ` (Seed ${run.seed})`}
+                        ` (${t("Seed")} ${run.seed})`}
                     </td>
 
                     <td className="px-4 py-3 text-neutral-700">
@@ -818,7 +824,7 @@ export default function InboxView({ onSelect }) {
                 </td>
 
                 <td className="px-4 py-3">
-                  500 each
+                  {t("500 each")}
                 </td>
 
                 <td className="px-4 py-3">
@@ -1067,7 +1073,7 @@ export default function InboxView({ onSelect }) {
                         {/* Review detail tooltip */}
                         {detail && (
                           <div className="absolute right-0 top-full mt-1 w-64 bg-neutral-900 text-white text-[11px] font-normal normal-case rounded-md px-3 py-2 opacity-0 invisible group-hover/reason:opacity-100 group-hover/reason:visible transition-all z-20 shadow-lg">
-                            {detail}
+                            {t(detail)}
                           </div>
                         )}
                       </div>

@@ -26,6 +26,32 @@ export const LANGUAGES = [
 
 const DICT = {
   ms: {
+    // added after the dashboard gained reset, export and run history
+    "Document could not be parsed, likely a scan quality or corrupted file issue": "Dokumen tidak dapat dihuraikan, mungkin disebabkan kualiti imbasan atau fail yang rosak",
+    "One or more required fields were not found in the extracted data": "Satu atau lebih medan wajib tidak ditemui dalam data yang diekstrak",
+    "Extraction confidence fell below the review threshold": "Keyakinan pengekstrakan berada di bawah ambang semakan",
+    "A comparison was requested but the documents were not attached": "Perbandingan diminta tetapi dokumen tidak dilampirkan",
+    "An attachment is not a Shipping Instruction or Bill of Lading": "Lampiran bukan Arahan Penghantaran atau Bil Muatan",
+    "Reset the shared dashboard to the supplied dataset and clear generated validation history for everyone?": "Tetapkan semula papan pemuka kongsi kepada set data yang dibekalkan dan padam sejarah pengesahan yang dijana untuk semua pengguna?",
+    "Language": "Bahasa",
+    "Reset to Default": "Tetap Semula ke Lalai",
+    "Resetting...": "Menetapkan semula...",
+    "Failed to reset the dashboard.": "Gagal menetapkan semula papan pemuka.",
+    "Score": "Skor",
+    "Seed": "Benih",
+    "Validation Performance": "Prestasi Pengesahan",
+    "Current pipeline performance alongside pre-computed validation benchmarks.": "Prestasi saluran semasa bersama penanda aras pengesahan yang dikira terlebih dahulu.",
+    "AI Fallback": "Sandaran AI",
+    "ON": "HIDUP",
+    "OFF": "MATI",
+    "Export": "Eksport",
+    "Export JSON": "Eksport JSON",
+    "Export CSV": "Eksport CSV",
+    "Current Run": "Larian Semasa",
+    "Previous Run": "Larian Sebelumnya",
+    "500 each": "500 setiap satu",
+    "Run a generated dataset to display the score for the current run.": "Jalankan set data yang dijana untuk memaparkan skor larian semasa.",
+
     // navigation
     "Inbox Dashboard": "Papan Pemuka Peti Masuk",
     "Review Queue": "Barisan Semakan",
@@ -184,6 +210,32 @@ const DICT = {
   },
 
   zh: {
+    // added after the dashboard gained reset, export and run history
+    "Document could not be parsed, likely a scan quality or corrupted file issue": "无法解析文件，可能是扫描质量问题或文件已损坏",
+    "One or more required fields were not found in the extracted data": "提取的数据中缺少一个或多个必填字段",
+    "Extraction confidence fell below the review threshold": "提取置信度低于审核阈值",
+    "A comparison was requested but the documents were not attached": "已请求比对，但未附上文件",
+    "An attachment is not a Shipping Instruction or Bill of Lading": "附件不是装运指示或提单",
+    "Reset the shared dashboard to the supplied dataset and clear generated validation history for everyone?": "要将共享面板恢复为所提供的数据集，并为所有人清除已生成的验证记录吗？",
+    "Language": "语言",
+    "Reset to Default": "恢复默认",
+    "Resetting...": "正在重置…",
+    "Failed to reset the dashboard.": "重置面板失败。",
+    "Score": "得分",
+    "Seed": "种子",
+    "Validation Performance": "验证表现",
+    "Current pipeline performance alongside pre-computed validation benchmarks.": "当前流程表现，以及预先计算的验证基准。",
+    "AI Fallback": "AI 后备",
+    "ON": "开启",
+    "OFF": "关闭",
+    "Export": "导出",
+    "Export JSON": "导出 JSON",
+    "Export CSV": "导出 CSV",
+    "Current Run": "本次运行",
+    "Previous Run": "上次运行",
+    "500 each": "每个 500 封",
+    "Run a generated dataset to display the score for the current run.": "运行生成的数据集，以显示本次运行的得分。",
+
     // navigation
     "Inbox Dashboard": "收件箱面板",
     "Review Queue": "审核队列",

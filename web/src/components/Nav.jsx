@@ -43,7 +43,7 @@ export default function Nav({ view, setView }) {
           <select
             value={lang}
             onChange={(e) => setLang(e.target.value)}
-            aria-label="Language"
+            aria-label={t("Language")}
             className="border border-neutral-200 rounded-lg px-2 py-1.5 bg-white text-neutral-700 font-medium outline-none focus:border-blue-500 cursor-pointer"
           >
             {LANGUAGES.map((l) => (

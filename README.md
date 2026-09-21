@@ -233,9 +233,10 @@ python sdoc-hackathon-docker/data_v2/generate.py \
 
 - **Escalation recall 0.95.** One `wrong_doc_type` case (`email_501`) is
   reported OK, so no reviewer would see it.
-- **No OCR.** Three genuinely scanned PDFs are detected and escalated as
-  `unreadable` rather than read. Roadmap: OCR at low confidence, so the
-  reviewer gets a pre-filled form and the system still asks for confirmation.
+- **OCR is advisory.** Scanned pages are read by Tesseract, or Gemini vision
+  as a fallback, but OCR values are capped at confidence 0.50 and always need
+  a person to confirm. Two of the five unreadable files are corrupt, not
+  scanned, and cannot be read at all.
 - **Synthetic data.** 0.9990 says the pipeline is correct on this generator,
   not that document verification is solved. Real documents bring formats,
   stamps and vocabulary nobody anticipated — which is what the confidence
