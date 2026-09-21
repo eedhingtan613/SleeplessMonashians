@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import os
+import json
 
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -34,6 +35,7 @@ from sdoc.core.pipeline import FolderSource, process_email, run
 from sdoc.core.ingest import ingest, poppler_path
 from sdoc.core.aliases import learn
 
+from api.scoring import score_all
 from api.storage import (  # noqa: I001
     get_all_results,
     get_email_summaries,
@@ -289,29 +291,64 @@ def process_inbox(request: ProcessRequest = ProcessRequest()):
             source,
             llm_classify=llm,
         )
-        clear_results()
-        save_results(results)
-        _set_loaded_dataset(dataset_name)
+        # ---------------------------------------------------------
+        # Score current run
+        # ---------------------------------------------------------
 
-        review_count = sum(
-            1
-            for result in results.values()
-            if result.needs_review
-        )
+        evaluation = None
 
-        mismatch_count = sum(
-            1
-            for result in results.values()
-            if result.has_defect
-        )
+        if request.seed is not None and temp_dir is not None:
+            ground_truth_path = temp_dir / "ground_truth.json"
 
-        ok_count = sum(
-            1
-            for result in results.values()
-            if result.status == "OK"
-        )
+            if ground_truth_path.exists():
+                ground_truth = json.loads(
+                    ground_truth_path.read_text(encoding="utf-8")
+                )
 
-        return {
+                submission = {
+                    email_id: result.to_submission()
+                    for email_id, result in results.items()
+                }
+
+                scores = score_all(
+                    ground_truth,
+                    submission,
+                )
+
+                evaluation = {
+                    "final_score": scores["final_score"],
+                    "macro_f1": scores["stage1"]["macro_f1"],
+                    "defect_f1": scores["stage3"]["defect_f1"],
+                    "defect_precision": scores["stage3"]["defect_precision"],
+                    "defect_recall": scores["stage3"]["defect_recall"],
+                    "end_to_end": scores["end_to_end"]["rate"],
+                    "end_to_end_success": scores["end_to_end"]["success"],
+                    "end_to_end_total": scores["end_to_end"]["total"],
+                }
+            
+            clear_results()
+            save_results(results)
+            _set_loaded_dataset(dataset_name)
+
+            review_count = sum(
+                1
+                for result in results.values()
+                if result.needs_review
+            )
+
+            mismatch_count = sum(
+                1
+                for result in results.values()
+                if result.has_defect
+            )
+
+            ok_count = sum(
+                1
+                for result in results.values()
+                if result.status == "OK"
+            )
+
+            return {
             "message": "Inbox processed successfully",
             "dataset": dataset_name,
             "seed": request.seed,
@@ -321,6 +358,7 @@ def process_inbox(request: ProcessRequest = ProcessRequest()):
             "needs_review": review_count,
             "mismatches": mismatch_count,
             "llm_enabled": llm is not None,
+            "evaluation": evaluation,
         }
 
     except HTTPException:

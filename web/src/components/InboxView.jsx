@@ -36,6 +36,7 @@ export default function InboxView({ onSelect }) {
   const [processing, setProcessing] = useState(false);
   const [processError, setProcessError] = useState("");
   const [processResult, setProcessResult] = useState(null);
+  const [runHistory, setRunHistory] = useState([]);
 
   // ------------------------------------------------------------
   // Inbox loading state
@@ -74,7 +75,6 @@ export default function InboxView({ onSelect }) {
   async function handleRunPipeline() {
     setProcessing(true);
     setProcessError("");
-    setProcessResult(null);
 
     try {
       const trimmedSeed = seed.trim();
@@ -85,6 +85,18 @@ export default function InboxView({ onSelect }) {
       );
 
       setProcessResult(result);
+
+      if (result?.evaluation) {
+        setRunHistory((previous) =>
+          [
+            {
+              ...result,
+              runId: `${Date.now()}-${result.seed ?? "supplied"}`,
+            },
+            ...previous,
+          ].slice(0, 5)
+        );
+      }
 
       // Reload the inbox because /process writes new results
       // into the backend database.
@@ -133,6 +145,15 @@ export default function InboxView({ onSelect }) {
     review: emails.filter((e) => e.status === "NEEDS_REVIEW").length,
   };
 
+  // ------------------------------------------------------------
+  // Live evaluation returned by POST /process
+  // ------------------------------------------------------------
+  const evaluation = processResult?.evaluation;
+  const aiFallbackEnabled = processResult?.llm_enabled;
+
+  const formatScore = (value, digits = 4) =>
+    typeof value === "number" ? value.toFixed(digits) : "—";
+
   return (
     <div className="max-w-7xl mx-auto px-8 pb-12">
       {/* ========================================================
@@ -152,11 +173,15 @@ export default function InboxView({ onSelect }) {
             </div>
 
             <p className="text-xs text-neutral-500 mt-1 max-w-2xl leading-relaxed">
-              {t("Generate a reproducible test dataset using a seed, then run the emails through classification, document extraction and SI/BL comparison.")}
+              {t(
+                "Generate a reproducible test dataset using a seed, then run the emails through classification, document extraction and SI/BL comparison."
+              )}
             </p>
 
             <p className="text-[11px] text-neutral-400 mt-2">
-              {t("Leave the seed empty to process the supplied dataset instead.")}
+              {t(
+                "Leave the seed empty to process the supplied dataset instead."
+              )}
             </p>
           </div>
 
@@ -252,7 +277,9 @@ export default function InboxView({ onSelect }) {
             </p>
 
             <p className="text-xs text-blue-700 mt-1">
-              {t("The backend is generating the dataset and running classification, extraction and document comparison. This may take a moment.")}
+              {t(
+                "The backend is generating the dataset and running classification, extraction and document comparison. This may take a moment."
+              )}
             </p>
           </div>
         )}
@@ -292,16 +319,36 @@ export default function InboxView({ onSelect }) {
               <div className="flex flex-wrap justify-end gap-x-6 gap-y-2 text-xs">
                 {processResult.processed !== undefined && (
                   <div>
-                    <span className="text-emerald-600">{t("Processed")}</span>
+                    <span className="text-emerald-600">
+                      {t("Processed")}
+                    </span>
+
                     <span className="font-bold text-emerald-900 ml-1.5">
                       {processResult.processed}
                     </span>
                   </div>
                 )}
 
+                {processResult.evaluation?.final_score !== undefined && (
+                  <div>
+                    <span className="text-emerald-600">
+                      {t("Score")}
+                    </span>
+
+                    <span className="font-bold text-emerald-900 ml-1.5">
+                      {formatScore(
+                        processResult.evaluation.final_score
+                      )}
+                    </span>
+                  </div>
+                )}
+
                 {processResult.ok !== undefined && (
                   <div>
-                    <span className="text-emerald-600">OK</span>
+                    <span className="text-emerald-600">
+                      OK
+                    </span>
+
                     <span className="font-bold text-emerald-900 ml-1.5">
                       {processResult.ok}
                     </span>
@@ -310,7 +357,10 @@ export default function InboxView({ onSelect }) {
 
                 {processResult.mismatches !== undefined && (
                   <div>
-                    <span className="text-emerald-600">{t("Mismatch")}</span>
+                    <span className="text-emerald-600">
+                      {t("Mismatch")}
+                    </span>
+
                     <span className="font-bold text-emerald-900 ml-1.5">
                       {processResult.mismatches}
                     </span>
@@ -319,7 +369,10 @@ export default function InboxView({ onSelect }) {
 
                 {processResult.needs_review !== undefined && (
                   <div>
-                    <span className="text-emerald-600">{t("Review")}</span>
+                    <span className="text-emerald-600">
+                      {t("Review")}
+                    </span>
+
                     <span className="font-bold text-emerald-900 ml-1.5">
                       {processResult.needs_review}
                     </span>
@@ -332,62 +385,188 @@ export default function InboxView({ onSelect }) {
       </div>
 
       {/* ========================================================
-          OFFLINE VALIDATION BENCHMARKS
+          VALIDATION PERFORMANCE
       ======================================================== */}
       <div className="bg-white p-6 mb-8 border border-neutral-200 rounded-xl shadow-xs">
-        <div className="flex justify-between items-center mb-4">
+        <div className="flex justify-between items-center mb-4 gap-4">
           <div>
             <h2 className="text-base font-bold text-neutral-900">
-              {t("Offline Validation Benchmarks")}
+              {t("Validation Performance")}
             </h2>
 
             <p className="text-xs text-neutral-500 mt-0.5">
-              {t("Pre-computed development results against reference datasets.")}
+              {t(
+                "Current pipeline performance alongside pre-computed validation benchmarks."
+              )}
             </p>
           </div>
 
-          <span className="bg-blue-50 text-blue-700 border border-blue-200 text-xs font-bold px-3 py-1.5 rounded-md">
-            {t("AI Fallback: ON")}
+          <span
+            className={`border text-xs font-bold px-3 py-1.5 rounded-md ${
+              aiFallbackEnabled === false
+                ? "bg-neutral-50 text-neutral-600 border-neutral-200"
+                : aiFallbackEnabled === true
+                ? "bg-blue-50 text-blue-700 border-blue-200"
+                : "bg-neutral-50 text-neutral-500 border-neutral-200"
+            }`}
+          >
+            {t("AI Fallback")}:{" "}
+            {aiFallbackEnabled === true
+              ? t("ON")
+              : aiFallbackEnabled === false
+              ? t("OFF")
+              : "—"}
           </span>
         </div>
 
-        <table className="w-full text-sm text-left text-neutral-600 border-collapse">
-          <thead className="text-xs text-neutral-500 uppercase bg-neutral-50 border-b border-neutral-200">
-            <tr>
-              <th className="px-4 py-3 font-semibold">{t("Dataset")}</th>
-              <th className="px-4 py-3 font-semibold">{t("Rules")}</th>
-              <th className="px-4 py-3 font-semibold">+ Gemini</th>
-              <th className="px-4 py-3 font-semibold">{t("End-to-End")}</th>
-              <th className="px-4 py-3 font-semibold">{t("Defect P/R")}</th>
-            </tr>
-          </thead>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-left text-neutral-600 border-collapse">
+            <thead className="text-xs text-neutral-500 uppercase bg-neutral-50 border-b border-neutral-200">
+              <tr>
+                <th className="px-4 py-3 font-semibold">
+                  {t("Dataset")}
+                </th>
 
-          <tbody className="divide-y divide-neutral-100">
-            <tr className="hover:bg-neutral-50/50">
-              <td className="px-4 py-3 font-medium text-neutral-900">
-                {t("Supplied (Seed 42)")}
-              </td>
-              <td className="px-4 py-3">0.9904</td>
-              <td className="px-4 py-3 font-semibold text-neutral-800">
-                0.9995
-              </td>
-              <td className="px-4 py-3">1.0000</td>
-              <td className="px-4 py-3">1.000 / 1.000</td>
-            </tr>
+                <th className="px-4 py-3 font-semibold">
+                  {t("Rules")}
+                </th>
 
-            <tr className="hover:bg-neutral-50/50">
-              <td className="px-4 py-3 font-medium text-neutral-900">
-                {t("5 Unseen Seeds")}
-              </td>
-              <td className="px-4 py-3">—</td>
-              <td className="px-4 py-3 font-bold text-blue-600">
-                0.9990 ± 0.0011
-              </td>
-              <td className="px-4 py-3">1.0000</td>
-              <td className="px-4 py-3">1.000 / 1.000</td>
-            </tr>
-          </tbody>
-        </table>
+                <th className="px-4 py-3 font-semibold">
+                  + Gemini
+                </th>
+
+                <th className="px-4 py-3 font-semibold">
+                  {t("End-to-End")}
+                </th>
+
+                <th className="px-4 py-3 font-semibold">
+                  {t("Defect P/R")}
+                </th>
+              </tr>
+            </thead>
+
+            <tbody className="divide-y divide-neutral-100">
+              {/* LIVE CURRENT RUN */}
+              {runHistory.map((run, index) => {
+                const ev = run.evaluation;
+
+                return (
+                  <tr
+                    key={run.runId}
+                    className={
+                      index === 0
+                        ? "bg-blue-50/50 hover:bg-blue-50"
+                        : "hover:bg-neutral-50/50"
+                    }
+                  >
+                    <td
+                      className={`px-4 py-3 ${
+                        index === 0
+                          ? "font-bold text-blue-900"
+                          : "font-medium text-neutral-800"
+                      }`}
+                    >
+                      {index === 0 ? "Current Run" : "Previous Run"}
+                      {run.seed !== null &&
+                        run.seed !== undefined &&
+                        ` (Seed ${run.seed})`}
+                    </td>
+
+                    <td className="px-4 py-3 text-neutral-400">
+                      —
+                    </td>
+
+                    <td
+                      className={`px-4 py-3 font-bold ${
+                        index === 0
+                          ? "text-blue-700"
+                          : "text-neutral-700"
+                      }`}
+                    >
+                      {formatScore(ev.final_score)}
+                    </td>
+
+                    <td
+                      className={`px-4 py-3 ${
+                        index === 0
+                          ? "font-semibold text-blue-700"
+                          : ""
+                      }`}
+                    >
+                      {formatScore(ev.end_to_end)}
+                    </td>
+
+                    <td
+                      className={`px-4 py-3 ${
+                        index === 0
+                          ? "font-semibold text-blue-700"
+                          : ""
+                      }`}
+                    >
+                      {formatScore(ev.defect_precision, 3)}
+                      {" / "}
+                      {formatScore(ev.defect_recall, 3)}
+                    </td>
+                  </tr>
+                );
+              })}
+
+              {/* HISTORICAL SUPPLIED DATASET BENCHMARK */}
+              <tr className="hover:bg-neutral-50/50">
+                <td className="px-4 py-3 font-medium text-neutral-900">
+                  {t("Supplied (Seed 42)")}
+                </td>
+
+                <td className="px-4 py-3">
+                  0.9904
+                </td>
+
+                <td className="px-4 py-3 font-semibold text-neutral-800">
+                  0.9995
+                </td>
+
+                <td className="px-4 py-3">
+                  1.0000
+                </td>
+
+                <td className="px-4 py-3">
+                  1.000 / 1.000
+                </td>
+              </tr>
+
+              {/* HISTORICAL FIVE-SEED BENCHMARK */}
+              <tr className="hover:bg-neutral-50/50">
+                <td className="px-4 py-3 font-medium text-neutral-900">
+                  {t("5 Unseen Seeds")}
+                </td>
+
+                <td className="px-4 py-3">
+                  —
+                </td>
+
+                <td className="px-4 py-3 font-bold text-blue-600">
+                  0.9990 ± 0.0011
+                </td>
+
+                <td className="px-4 py-3">
+                  1.0000
+                </td>
+
+                <td className="px-4 py-3">
+                  1.000 / 1.000
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        {!evaluation && (
+          <p className="text-[11px] text-neutral-400 mt-3">
+            {t(
+              "Run a generated dataset to display the score for the current run."
+            )}
+          </p>
+        )}
       </div>
 
       {/* ========================================================
@@ -568,39 +747,46 @@ export default function InboxView({ onSelect }) {
                   </span>
 
                   {/* Human-review reason */}
-                  {e.status === "NEEDS_REVIEW" && e.review_reason && (
-                    <div className="group/reason relative">
-                      <span
-                        className="text-[10px] text-rose-600 font-extrabold uppercase tracking-wider cursor-help inline-flex items-center gap-1"
-                        title={detail || ""}
-                      >
-                        ↳ {t(e.review_reason.replace(/_/g, " "))}
+                  {e.status === "NEEDS_REVIEW" &&
+                    e.review_reason && (
+                      <div className="group/reason relative">
+                        <span
+                          className="text-[10px] text-rose-600 font-extrabold uppercase tracking-wider cursor-help inline-flex items-center gap-1"
+                          title={detail || ""}
+                        >
+                          ↳{" "}
+                          {t(
+                            e.review_reason.replace(
+                              /_/g,
+                              " "
+                            )
+                          )}
 
+                          {detail && (
+                            <svg
+                              className="w-2.5 h-2.5 opacity-60"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                              />
+                            </svg>
+                          )}
+                        </span>
+
+                        {/* Review detail tooltip */}
                         {detail && (
-                          <svg
-                            className="w-2.5 h-2.5 opacity-60"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                            />
-                          </svg>
+                          <div className="absolute right-0 top-full mt-1 w-64 bg-neutral-900 text-white text-[11px] font-normal normal-case rounded-md px-3 py-2 opacity-0 invisible group-hover/reason:opacity-100 group-hover/reason:visible transition-all z-20 shadow-lg">
+                            {detail}
+                          </div>
                         )}
-                      </span>
-
-                      {/* Review detail tooltip */}
-                      {detail && (
-                        <div className="absolute right-0 top-full mt-1 w-64 bg-neutral-900 text-white text-[11px] font-normal normal-case rounded-md px-3 py-2 opacity-0 invisible group-hover/reason:opacity-100 group-hover/reason:visible transition-all z-20 shadow-lg">
-                          {detail}
-                        </div>
-                      )}
-                    </div>
-                  )}
+                      </div>
+                    )}
                 </div>
               </button>
             );
@@ -618,6 +804,7 @@ function Select({
   defaultLabel = "All",
 }) {
   const t = useT();
+
   return (
     <select
       value={value}
@@ -625,7 +812,10 @@ function Select({
       className="text-sm border border-neutral-200 rounded-lg px-4 py-2.5 bg-white text-neutral-700 font-medium outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all cursor-pointer shadow-2xs"
     >
       {options.map((option) => (
-        <option key={option} value={option}>
+        <option
+          key={option}
+          value={option}
+        >
           {option === "ALL"
             ? t(defaultLabel)
             : t(option.replaceAll("_", " "))}
