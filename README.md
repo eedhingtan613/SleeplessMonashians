@@ -1,6 +1,12 @@
-# Shipping Document Verification
+# DocHarbor AI
+
+AI-assisted shipping document verification, with evidence for every decision.
 
 Averis x Monash Hackathon 2026 — team **SleeplessMonashians**
+
+Lee Jia Wey · Nicholas Wong · Tang Wei Zhi · Ooi Hui Yi · Tan Ee Dhing
+
+**Live app: https://sleepless-monashians-vercel.vercel.app**
 
 An operations inbox receives document-check requests mixed in with new
 shipping instructions, invoice queries, routine updates and spam. For a check
@@ -44,11 +50,24 @@ No API key is needed: the model's previous answers are committed under
 
 ### The deployed service
 
-**https://sdoc-api-856612571283.asia-southeast1.run.app/docs**
+| | |
+|---|---|
+| **Web app** | https://sleepless-monashians-vercel.vercel.app |
+| API | https://sdoc-api-856612571283.asia-southeast1.run.app |
+| API docs | https://sdoc-api-856612571283.asia-southeast1.run.app/docs |
 
-Publicly accessible, no login. Interactive documentation — pick an endpoint,
-*Try it out*, *Execute*. Start with `POST /process`, then
-`GET /emails/email_013`.
+Both are public, no login. The web app (React, on Vercel) talks to the API
+(FastAPI, on Google Cloud Run).
+
+Suggested path through the app: open `email_013` from the inbox to see a
+confirmed mismatch with its source lines highlighted in both documents, draft
+the amendment request, then open **Review Queue** to resolve an escalated
+case.
+
+**The demo is shared by everyone viewing it.** Running a generated dataset or
+saving a correction changes what every visitor sees. If the inbox shows a
+generated dataset rather than the supplied 520 emails, click
+**Reset to Default** to restore it.
 
 ### Run it locally
 
